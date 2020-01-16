@@ -13,10 +13,6 @@ import { EndResult, EventSet, InternalFireEventResult, InternalWalker,
  * A pattern for ``<oneOrMore>``.
  */
 export class  OneOrMore extends OneSubpattern {
-  _computeHasEmptyPattern(): boolean {
-    return this.pat.hasEmptyPattern();
-  }
-
   newWalker(): InternalWalker {
     const hasAttrs = this.hasAttrs();
     const currentIteration = this.pat.newWalker();
@@ -83,8 +79,7 @@ class OneOrMoreWalker implements InternalWalker {
 
   fireEvent(name: string, params: string[],
             nameResolver: NameResolver): InternalFireEventResult {
-    const evIsAttributeEvent = isAttributeEvent(name);
-    if (evIsAttributeEvent && !this.hasAttrs) {
+    if (!this.hasAttrs && isAttributeEvent(name)) {
       return new InternalFireEventResult(false);
     }
 
@@ -92,32 +87,28 @@ class OneOrMoreWalker implements InternalWalker {
 
     const ret = currentIteration.fireEvent(name, params, nameResolver);
     if (ret.matched) {
-      if (evIsAttributeEvent) {
-        this.canEndAttribute = currentIteration.canEndAttribute;
-      }
+      this.canEndAttribute = currentIteration.canEndAttribute;
       this.canEnd = currentIteration.canEnd;
 
       return ret;
     }
 
     if (currentIteration.canEnd) {
-      if (this.nextIteration === undefined) {
-        this.nextIteration = this.subPat.newWalker();
+      let next = this.nextIteration;
+      if (next === undefined) {
+        next = this.nextIteration = this.subPat.newWalker();
       }
-      const nextRet = this.nextIteration.fireEvent(name, params, nameResolver);
+      const nextRet = next.fireEvent(name, params, nameResolver);
       if (nextRet.matched) {
         if (currentIteration.end()) {
           throw new Error(
             "internal error; canEnd returns true but end() fails");
         }
 
-        this.currentIteration = this.nextIteration;
+        this.currentIteration = next;
         this.nextIteration = undefined;
-        if (evIsAttributeEvent) {
-          this.canEndAttribute = this.currentIteration.canEndAttribute;
-        }
-
-        this.canEnd = this.currentIteration.canEnd;
+        this.canEndAttribute = next.canEndAttribute;
+        this.canEnd = next.canEnd;
       }
 
       return nextRet;

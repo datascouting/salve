@@ -5,13 +5,12 @@
  * @copyright Mangalam Research Center for Buddhist Languages
  */
 
-import { ValidationError } from "../errors";
-import { Events } from "../events";
-import { NameResolver } from "../name_resolver";
-import * as util from "../util";
-import { Define } from "./define";
-import { Element } from "./element";
-import { Ref, RefWalker } from "./ref";
+import {ValidationError} from "../errors";
+import {Events} from "../events";
+import {NameResolver} from "../name_resolver";
+import {Define} from "./define";
+import {Element} from "./element";
+import {RefWalker} from "./ref";
 
 // XML validation against a schema could work without any lookahead if it were
 // not for namespaces. However, namespace support means that the interpretation
@@ -62,150 +61,15 @@ import { Ref, RefWalker } from "./ref";
 // parsing code must *restart* validation *from* the location of the original
 // enterStartTag event.
 
-// A note on performance and the presence of the debug code here. We did a
-// profiling test with the debug code entirely removed. It made no
-// difference. Though TypeScript does not eliminate the code when DEBUG is
-// false, its impact on real-world test runs is undetectable. (Note that
-// uglification strips it from the minified code.)
-const DEBUG: boolean = false;
-
-// tslint:disable-next-line:strict-boolean-expressions
-if (DEBUG) {
-  //
-  // Debugging utilities
-  //
-
-  const trace: (msg: any) => void = (msg: string) => {
-    console.log(msg); // tslint:disable-line:no-console
-  };
-
-  // @ts-ignore
-  const stackTrace: () => void = () => {
-    trace(new Error().stack);
-  };
-
-  // tslint:disable:no-var-keyword
-  // @ts-ignore
-  var possibleTracer: (oldMethod: Function, name: string, args: any[]) => any;
-  // @ts-ignore
-  var fireEventTracer: (oldMethod: Function, name: string, args: any[]) => any;
-  // @ts-ignore
-  var plainTracer: (oldMethod: Function, name: string, args: any[]) => any;
-  var callDump: (msg: string, name: string, me: any) => void;
-  // tslint:enable:no-var-keyword
-
-  // tslint:disable-next-line:only-arrow-functions no-void-expression
-  (function buildTracingCode(): void {
-    let buf: string = "";
-    const step: string = " ";
-
-    const nameOrPath: (walker: any) => string = (walker: any) => {
-      const el = walker.el;
-
-      if (el == null) {
-        return "";
-      }
-
-      if (el.name === undefined) {
-        return ` with path ${el.xmlPath}`;
-      }
-
-      const named: string = ` named ${el.name.toString()}`;
-      if (walker.boundName == null) {
-        return named;
-      }
-
-      return `${named} (bound to ${walker.boundName.toString()})`;
-    };
-
-    callDump = (msg: string, name: string, me: any) => {
-      trace(`${buf}${msg}${name} on class ${me.constructor.name}` +
-            ` id ${me.id}${nameOrPath(me)}`);
-    };
-
-    // tslint:disable-next-line:only-arrow-functions
-    possibleTracer = function _possibleTracer(this: any,
-                                              oldMethod: Function, name: string,
-                                              args: any[]): any {
-      buf += step;
-      callDump("calling ", name, this);
-      const ret: any = oldMethod.apply(this, args);
-      callDump("called ", name, this);
-      trace(`${buf}return from the call: ${util.inspect(ret)}`);
-      buf = buf.slice(step.length);
-
-      return ret;
-    };
-
-    // tslint:disable-next-line:only-arrow-functions
-    fireEventTracer = function _fireEventTracer(this: any,
-                                                oldMethod: Function,
-                                                name: string,
-                                                args: any[]): any {
-      buf += step;
-      callDump("calling ", name, this);
-      trace(buf + util.inspect(args[0]));
-
-      const ret: any = oldMethod.apply(this, args);
-      callDump("called ", name, this);
-      if (ret !== false) {
-        trace(`${buf}return from the call: ${util.inspect(ret)}`);
-      }
-      buf = buf.slice(step.length);
-
-      return ret;
-    };
-
-    // tslint:disable-next-line:only-arrow-functions
-    plainTracer = function _plainTracer(this: any,
-                                        oldMethod: Function, name: string,
-                                        args: any[]): any {
-      buf += step;
-      callDump("calling ", name, this);
-
-      const ret: any = oldMethod.apply(this, args);
-      callDump("called ", name, this);
-      trace(`${buf}return from the call: ${util.inspect(ret)}`);
-      buf = buf.slice(step.length);
-
-      return ret;
-    };
-  }());
-
-  /**
-   * Utility function for debugging. Wraps ``me[name]`` in a wrapper
-   * function. ``me[name]`` must be a function.  ``me`` could be an instance or
-   * could be a prototype. This function cannot trivially wrap the same field on
-   * the same object twice.
-   *
-   * @private
-   * @param me The object to modify.
-   * @param name The field name to modify in the object.
-   * @param f The function that should serve as wrapper.
-   *
-   */
-  // @ts-ignore
-  // tslint:disable-next-line:only-arrow-functions no-var-keyword prefer-const
-  var wrap: (me: any, name: string, f: Function) => void =
-    (me: any, name: string, f: Function) => {
-      const mangledName: string = `___${name}`;
-      me[mangledName] = me[name];
-      // tslint:disable-next-line:only-arrow-functions
-      me[name] = function wrapper(this: any): any {
-        return f.call(this, me[mangledName], name, arguments);
-      };
-    };
-  /* tslint:enable */
-}
-
 export type EventSet = Set<Events>;
 
 export type FireEventResult = false | undefined | ValidationError[];
 
 export class InternalFireEventResult {
   constructor(readonly matched: boolean,
-              readonly errors?: ReadonlyArray<ValidationError>,
-              readonly refs?: ReadonlyArray<RefWalker>) {}
+              readonly errors?: ValidationError[],
+              readonly refs?: RefWalker[]) {
+  }
 
   static fromEndResult(result: EndResult): InternalFireEventResult {
     return (result === false) ?
@@ -214,24 +78,24 @@ export class InternalFireEventResult {
   }
 
   combine(other: InternalFireEventResult): InternalFireEventResult {
-    let errors: ReadonlyArray<ValidationError> | undefined;
-    let refs: ReadonlyArray<RefWalker> | undefined;
     if (this.matched) {
-      refs = this.refs;
+      const { refs } = this;
       const oRefs = other.refs;
-      if (oRefs !== undefined) {
-        refs = refs === undefined ? oRefs : refs.concat(oRefs);
-      }
-    }
-    else {
-      errors = this.errors;
-      const oErrors = other.errors;
-      if (oErrors !== undefined) {
-        errors = errors === undefined ? oErrors : errors.concat(oErrors);
-      }
+      return oRefs === undefined ?
+        this :
+        new InternalFireEventResult(true, undefined,
+                                    refs === undefined ? oRefs :
+                                    refs.concat(oRefs));
     }
 
-    return new InternalFireEventResult(this.matched, errors, refs);
+    const { errors } = this;
+    const oErrors = other.errors;
+    return oErrors === undefined ?
+      this :
+      new InternalFireEventResult(false,
+                                  errors === undefined ? oErrors :
+                                  errors.concat(oErrors),
+                                  undefined);
   }
 }
 
@@ -273,15 +137,9 @@ export class BasePattern {
    *
    * @param namespaces An object whose keys are the namespaces seen in
    * the schema. This method populates the object.
-   *
-   * @returns The references that cannot be resolved, or ``undefined`` if no
-   * references cannot be resolved. The caller is free to modify the value
-   * returned as needed.
-   *
    */
-  _prepare(definitions: Map<string, Define>,
-           namespaces: Set<string>): Ref[] | undefined {
-    return undefined;
+  // tslint:disable-next-line:no-empty
+  _prepare(definitions: Map<string, Define>, namespaces: Set<string>): void {
   }
 
   /**
@@ -343,15 +201,10 @@ export abstract class OneSubpattern<T extends (Pattern | Element) = Pattern>
     super(xmlPath);
   }
 
-  protected abstract _computeHasEmptyPattern(): boolean;
-
-  _prepare(definitions: Map<string, Define>,
-           namespaces: Set<string>): Ref[] | undefined {
-    const ret = this.pat._prepare(definitions, namespaces);
+  _prepare(definitions: Map<string, Define>, namespaces: Set<string>): void {
+    this.pat._prepare(definitions, namespaces);
     this._cachedHasAttrs = this.pat.hasAttrs();
-    this._cachedHasEmptyPattern = this._computeHasEmptyPattern();
-
-    return ret;
+    this._cachedHasEmptyPattern = this.pat.hasEmptyPattern();
   }
 
   hasAttrs(): boolean {
@@ -379,18 +232,11 @@ export abstract class TwoSubpatterns extends Pattern {
 
   protected abstract _computeHasEmptyPattern(): boolean;
 
-  _prepare(definitions: Map<string, Define>,
-           namespaces: Set<string>): Ref[] | undefined {
-    const aRefs = this.patA._prepare(definitions, namespaces);
-    const bRefs = this.patB._prepare(definitions, namespaces);
+  _prepare(definitions: Map<string, Define>, namespaces: Set<string>): void {
+    this.patA._prepare(definitions, namespaces);
+    this.patB._prepare(definitions, namespaces);
     this._cachedHasAttrs = this.patA.hasAttrs() || this.patB.hasAttrs();
     this._cachedHasEmptyPattern = this._computeHasEmptyPattern();
-
-    if (aRefs !== undefined) {
-      return bRefs === undefined ? aRefs : aRefs.concat(bRefs);
-    }
-
-    return bRefs;
   }
 
   hasAttrs(): boolean {
@@ -405,9 +251,8 @@ export abstract class TwoSubpatterns extends Pattern {
 }
 
 export function isAttributeEvent(name: string): boolean {
-  // Using a set here is not clearly faster than using this logic.
-  return (name === "attributeName" || name === "attributeValue" ||
-          name === "attributeNameAndValue");
+  return name === "attributeName" || name === "attributeValue" ||
+    name === "attributeNameAndValue";
 }
 
 interface NodeMap extends Map<string, false | NodeMap> {}

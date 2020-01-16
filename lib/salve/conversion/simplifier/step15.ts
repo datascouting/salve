@@ -102,7 +102,7 @@ function transformGrammars(multiple: boolean,
 
   const toRename =
     grammar.defines.concat(grammar.refs,
-                           ...grammar.childGrammars.map((x) => x.parentRefs));
+                           ...grammar.childGrammars.map(x => x.parentRefs));
 
   const suffix = `-gr-${grammar.id}`;
   // Make all names unique globally.
@@ -130,7 +130,8 @@ function transformGrammars(multiple: boolean,
 
   if (grammar !== root) {
     // Remove the remaining ``grammar`` and ``start`` elements.
-    grammar.grammar.replaceWith(start.children[0] as Element);
+    grammar.grammar.parent!.replaceChildWith(grammar.grammar,
+                                             start.children[0] as Element);
   }
 
 }
@@ -166,10 +167,7 @@ export function step15(el: Element): Element {
   let root = el;
 
   if (el.local !== "grammar") {
-    root = Element.makeElement("grammar");
-    const start = Element.makeElement("start");
-    root.appendChild(start);
-    start.appendChild(el);
+    root = Element.makeElement("grammar", [Element.makeElement("start", [el])]);
 
     root.setXMLNS(RELAXNG_URI);
     el.removeAttribute("xmlns");
@@ -202,13 +200,17 @@ export function step15(el: Element): Element {
       throw new SchemaValidationError("top-level grammar contains parentRef!");
     }
 
-    // Move the ``define`` elements to the root grammar. We do this on the root
-    // grammar too so that the ``define`` elements are moved after ``start``.
-    grammar.grammar.appendChildren(grammar.defines);
-
-    const start = grammar.grammar.children[0] as Element;
+    let start = grammar.grammar.children[0] as Element;
     if (start.local !== "start") {
-      throw new Error("there should be a single start element in the grammar!");
+      // The first element is not start. Move the defines around.
+      grammar.grammar.appendChildren(grammar.defines);
+
+      start = grammar.grammar.children[0] as Element;
+      if (start.local !== "start") {
+        // Somehow it did not work!
+        throw new Error("there should be a single start element in the \
+grammar!");
+      }
     }
   }
 

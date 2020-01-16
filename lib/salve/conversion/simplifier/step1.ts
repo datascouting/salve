@@ -35,11 +35,8 @@ ${seenURLs.reverse().concat(resolved.toString()).join("\n")}`);
 class Step1 {
   constructor(private readonly parser: Parser) {}
 
-  async walk(parentBase: URL, seenURLs: string[], root: Element,
+  async walk(parentBase: URL, seenURLs: string[],
              el: Element): Promise<Element> {
-    let currentRoot = root;
-    const baseAttr = el.getAttribute("xml:base");
-
     // The XML parser we use immediately drops all *elements* which are not in
     // the RELAXNG_URI namespace so we don't have to remove them here.
 
@@ -50,10 +47,14 @@ class Step1 {
     // namespace. "xml:base" in particular is no longer of any use. We do keep
     // namespace declarations, as they are used later for resolving QNames.
     const attrs = el.getRawAttributes();
+    let baseAttr: string | undefined;
     for (const name of Object.keys(attrs)) {
       const attr = attrs[name];
       const { uri, prefix } = attr;
       if (name !== "xmlns" && uri !== "" && prefix !== "xmlns") {
+        if (name === "xml:base") {
+          baseAttr = attr.value;
+        }
         delete attrs[name];
       }
       else if (name === "name" ||
@@ -63,64 +64,50 @@ class Step1 {
       }
     }
 
-    const local = el.local;
-    // We don't normalize text nodes in param or value.
-    if (!(local === "param" || local === "value")) {
-      const newChildren = [];
-      const children = el.children;
-      let modified = false;
-      for (const child of children) {
-        if (child.kind === "element") {
-          newChildren.push(child);
-          continue;
-        }
-
-        const orig = child.text;
-        const clean = orig.trim();
-        if (clean !== "") {
-          // name gets the trimmed value
-          if (local === "name" && orig !== clean) {
-            // We're triming text.
-            modified = true;
-            newChildren.push(new Text(clean));
+    const currentBase = baseAttr === undefined ? parentBase :
+      resolveURL(parentBase, baseAttr);
+    const { children, local } = el;
+    if (children.length !== 0) {
+      // We don't normalize text nodes in param or value.
+      if (local === "param" || local === "value") {
+        for (const child of children) {
+          if (isElement(child)) {
+            await this.walk(currentBase, seenURLs, child);
           }
-          else {
-            newChildren.push(child);
-          }
-        }
-        else {
-          // We're dropping a whitespace node.
-          modified = true;
         }
       }
+      else {
+        const newChildren = [];
+        for (const child of children) {
+          if (isElement(child)) {
+            const replace = await this.walk(currentBase, seenURLs, child);
+            newChildren.push(replace === null ? child : replace);
+            continue;
+          }
 
-      // Perform the replacement only if needed.
-      if (modified) {
+          const orig = child.text;
+          const clean = orig.trim();
+          if (clean !== "") {
+            // name gets the trimmed value
+            newChildren.push(local === "name" && orig !== clean ?
+                             // We're triming text.
+                             new Text(clean) :
+                             child);
+          }
+          // else we drop a node consisting entirely of whitespace
+        }
+
         el.replaceContent(newChildren);
       }
     }
 
-    const currentBase = baseAttr === undefined ? parentBase :
-      resolveURL(parentBase, baseAttr);
-    for (const child of el.children) {
-      if (!(isElement(child))) {
-        continue;
-      }
-
-      await this.walk(currentBase, seenURLs, currentRoot, child);
+    const handler = (this as unknown as Record<string, Handler>)[local];
+    if (handler === undefined) {
+      return el;
     }
 
-    const handler = (this as unknown as Record<string, Handler>)[el.local];
-
-    if (handler !== undefined) {
-      const replacement = await handler.call(this, currentBase, seenURLs, el);
-      if (replacement !== null && el === currentRoot) {
-        // We have a new root.
-        currentRoot = replacement;
-      }
-    }
-
-    return currentRoot;
+    const replacement = await handler.call(this, currentBase, seenURLs, el);
+    return replacement === null ? el : replacement;
   }
 
   async externalRef(currentBase: URL, seenURLs: string[],
@@ -130,7 +117,7 @@ class Step1 {
       await loadFromElement(currentBase, seenURLs, el, this.parser);
     includedTree = await this.walk(resolved,
                                    [resolved.toString(), ...seenURLs],
-                                   includedTree, includedTree);
+                                   includedTree);
     const ns = el.getAttribute("ns");
     const treeNs = includedTree.getAttribute("ns");
     if (ns !== undefined && treeNs === undefined) {
@@ -151,7 +138,7 @@ class Step1 {
       // if we're forming the root of the new tree.
       includedTree.removeAttribute("xmlns");
 
-      el.replaceWith(includedTree);
+      el.parent!.replaceChildWith(el, includedTree);
     }
 
     return includedTree;
@@ -162,7 +149,7 @@ class Step1 {
     const { tree: includedTree, resolved } =
       await loadFromElement(currentBase, seenURLs, el, this.parser);
     await this.walk(resolved, [resolved.toString(), ...seenURLs],
-                    includedTree, includedTree);
+                    includedTree);
 
     // By this point, the tree's default namespace is the Relax NG one. So we
     // can remove it to avoid redeclaring it.
@@ -182,7 +169,7 @@ class Step1 {
           "include contains start element but grammar does not");
       }
       for (const start of grammarStarts) {
-        start.remove();
+        start.parent!.removeChild(start);
       }
     }
 
@@ -199,7 +186,7 @@ grammar`);
       }
 
       for (const def of defs) {
-        def.remove();
+        def.parent!.removeChild(def);
       }
     }
     el.local = "div";
@@ -262,6 +249,5 @@ grammar`);
 export async function step1(documentBase: URL,
                             tree: Element,
                             parser: Parser): Promise<Element> {
-  return new Step1(parser).walk(documentBase, [documentBase.toString()], tree,
-                                tree);
+  return new Step1(parser).walk(documentBase, [documentBase.toString()], tree);
 }

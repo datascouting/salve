@@ -11,7 +11,7 @@ import { NameResolver } from "../name_resolver";
 import { BasePattern, EndResult, EventSet, InternalFireEventResult,
          InternalWalker, Pattern } from "./base";
 import { Define } from "./define";
-import { Ref } from "./ref";
+import { NotAllowed } from "./not_allowed";
 
 export interface Initializable {
   initWithAttributes(attrs: string[],
@@ -22,6 +22,8 @@ export interface Initializable {
  * A pattern for elements.
  */
 export class Element extends BasePattern {
+  readonly notAllowed: boolean;
+
   /**
    * @param xmlPath This is a string which uniquely identifies the
    * element from the simplified RNG tree. Used in debugging.
@@ -33,11 +35,13 @@ export class Element extends BasePattern {
   constructor(xmlPath: string, readonly name: ConcreteName,
               readonly pat: Pattern) {
     super(xmlPath);
+    this.notAllowed = pat instanceof NotAllowed;
   }
 
   newWalker(boundName: Name): InternalWalker & Initializable {
     // tslint:disable-next-line:no-use-before-declare
     return new ElementWalker(this,
+                             this.pat.hasAttrs(),
                              this.pat.newWalker(),
                              false,
                              new EndTagEvent(boundName),
@@ -57,11 +61,9 @@ export class Element extends BasePattern {
     return false;
   }
 
-  _prepare(definitions: Map<string, Define>,
-           namespaces: Set<string>): Ref[] | undefined {
+  _prepare(definitions: Map<string, Define>, namespaces: Set<string>): void {
     this.name._recordNamespaces(namespaces, true);
-
-    return this.pat._prepare(definitions, namespaces);
+    this.pat._prepare(definitions, namespaces);
   }
 }
 
@@ -74,6 +76,7 @@ class ElementWalker implements InternalWalker, Initializable {
     new LeaveStartTagEvent();
 
   constructor(protected readonly el: Element,
+              private readonly hasAttrs: boolean,
               private readonly walker: InternalWalker,
               private endedStartTag: boolean,
               private readonly endTagEvent: EndTagEvent,
@@ -83,6 +86,7 @@ class ElementWalker implements InternalWalker, Initializable {
 
   clone(): this {
     return new ElementWalker(this.el,
+                             this.hasAttrs,
                              this.walker.clone(),
                              this.endedStartTag,
                              this.endTagEvent,
@@ -128,14 +132,25 @@ class ElementWalker implements InternalWalker, Initializable {
     throw new Error("calling possibleAttributes on ElementWalker is invalid");
   }
 
-  initWithAttributes(attrs: string[],
+  /**
+   * Initialize this walker with initial attributes. This is provided to support
+   * ``startTagAndAttributes``.
+   *
+   * @param params The **entire** list of parameters passed with the
+   * ``startTagAndAttributes`` event.
+   *
+   * @param nameResolver The name resolver to use to resolve names.
+   *
+   * @returns The result of firing all the events for the attributes.
+   */
+  initWithAttributes(params: string[],
                      nameResolver: NameResolver): InternalFireEventResult {
     const { walker } = this;
     // We need to handle all attributes and leave the start tag.
-    for (let ix = 0; ix < attrs.length; ix += 3) {
+    for (let ix = 2; ix < params.length; ix += 3) {
       const attrRet = walker.fireEvent("attributeNameAndValue",
-                                       [attrs[ix], attrs[ix + 1],
-                                        attrs[ix + 2]], nameResolver);
+                                       [params[ix], params[ix + 1],
+                                        params[ix + 2]], nameResolver);
       if (!attrRet.matched) {
         return attrRet;
       }
@@ -144,7 +159,7 @@ class ElementWalker implements InternalWalker, Initializable {
     // Make leaveStartTag effective.
     this.endedStartTag = true;
 
-    return this.el.pat.hasAttrs() ?
+    return this.hasAttrs ?
       InternalFireEventResult.fromEndResult(walker.endAttributes()) :
       new InternalFireEventResult(true);
   }
@@ -176,7 +191,7 @@ class ElementWalker implements InternalWalker, Initializable {
     if (name === "leaveStartTag") {
       this.endedStartTag = true;
 
-      return this.el.pat.hasAttrs() ?
+      return this.hasAttrs ?
         InternalFireEventResult.fromEndResult(walker.endAttributes()) :
         new InternalFireEventResult(true);
     }

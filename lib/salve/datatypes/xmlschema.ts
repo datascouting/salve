@@ -316,7 +316,7 @@ class FractionDigitsP extends NonNegativeIntegerParameter {
 
 abstract class NumericTypeDependentParameter extends NumericParameter {
   isInvalidParam(value: any, name: string, type: Base<{}>): ParamError | false {
-    const errors = type.disallows(value);
+    const errors = type.disallows(value, type.defaultParams);
     if (!errors) {
       return false;
     }
@@ -403,21 +403,6 @@ class MinExclusiveP extends NumericTypeDependentParameter {
 
 const minExclusiveP = new MinExclusiveP();
 
-type WhitespaceHandler = (value: string) => string;
-
-function whitespacePreserve(value: string): string {
-  return value;
-}
-
-function whitespaceCollapse(value: string): string {
-  // It is generally faster to trim first.
-  return value.trim().replace(/\s+/g, " ");
-}
-
-function whitespaceReplace(value: string): string {
-  return value.replace(/\s+/g, " ");
-}
-
 /**
  * A mapping of parameter names to parameter objects.
  */
@@ -429,6 +414,8 @@ for (const param of [lengthP, minLengthP, maxLengthP, patternP, totalDigitsP,
   PARAM_NAME_TO_OBJ[param.name] = param;
 }
 
+const EMPTY_PARAMS: ParsedParams = Object.create(null);
+
 /**
  * The structure that all datatype implementations in this module share.
  *
@@ -436,21 +423,9 @@ for (const param of [lengthP, minLengthP, maxLengthP, patternP, totalDigitsP,
  *
  */
 abstract class Base<T> implements Datatype<T> {
-  protected static throwMissingLocation(errors: ParamError[]): never {
-    // The only time location is undefined is if ``parseParams`` was called
-    // without arguments. That's an internal error because we should always be
-    // able to call ``parseParams`` to "parse" the default parameter values.
-    throw new Error("internal error: undefined location");
-  }
-
   abstract readonly name: string;
   abstract readonly needsContext: boolean;
   abstract readonly regexp: RegExp;
-
-  /**
-   * The default whitespace processing for this type.
-   */
-  readonly processWhitespace: WhitespaceHandler = whitespaceCollapse;
 
   /**
    * The error message to give if a value is disallowed.
@@ -462,19 +437,11 @@ abstract class Base<T> implements Datatype<T> {
    */
   readonly validParams: ReadonlyArray<Parameter>;
 
-  protected _defaultParams?: ParsedParams;
-
   /**
    * The default parameters if none are specified.
    */
-  protected get defaultParams(): ParsedParams {
-    const defaultParams = this._defaultParams;
-
-    if (defaultParams !== undefined) {
-      return defaultParams;
-    }
-
-    return this._defaultParams = this.parseParams("**INTERNAL**");
+  get defaultParams(): ParsedParams {
+    return EMPTY_PARAMS;
   }
 
   /**
@@ -482,19 +449,15 @@ abstract class Base<T> implements Datatype<T> {
    * string to an internal representation. It is never interchangeable with
    * [[parseValue]].
    *
-   * @param location The location of the value. It must be a string meaningful
-   * to the user. (In some scenarios, it is not possible to produce such a
-   * string. The code calling then can use a placeholder and strip that
-   * placeholder from reports to the user.)
-   *
    * @param value The value from the XML document.
    *
    * @param context The context of the value in the XML document.
    *
-   * @returns An internal representation.
+   * @returns An internal representation. Or an array of ValueError if the value
+   * cannot be converted.
    */
-  protected abstract convertValue(location: string, value: string,
-                                  context?: Context): T;
+  protected abstract convertValue(value: string,
+                                  context?: Context): T | ValueError[];
 
   /**
    * Computes the value's length. This may differ from the value's length, as it
@@ -510,20 +473,23 @@ abstract class Base<T> implements Datatype<T> {
 
   parseValue(location: string, value: string,
              context?: Context): ParsedValue<T> {
-    const errors = this.disallows(value, undefined, context);
+    const errors = this.disallows(value, this.defaultParams, context);
     if (errors) {
       throw new ValueValidationError(location, errors);
     }
 
-    return { value: this.convertValue(location, value, context) };
+    const result = this.convertValue(value, context);
+    if (result instanceof Array) {
+      throw new ValueValidationError(location, result);
+    }
+
+    return { value: result };
   }
 
   // tslint:disable-next-line: max-func-body-length
   parseParams(location: string, params?: RawParameter[]): ParsedParams {
     const ret: TrivialMap<string[]> = Object.create(null);
     if (params === undefined) {
-      // Yes, if the list of parameters is empty, we return an empty map because
-      // by default there are no default parameters.
       return ret;
     }
 
@@ -573,62 +539,62 @@ abstract class Base<T> implements Datatype<T> {
     // Inter-parameter checks. There's no point in trying to generalize
     // this.
 
-    /* tslint:disable: no-string-literal */
-    if (ret["minLength"] > ret["maxLength"]) {
+    const { minLength, maxLength, maxInclusive, maxExclusive, minInclusive,
+            minExclusive } = ret;
+    if (minLength > maxLength) {
       errors.push(new ParamError(
         "minLength must be less than or equal to maxLength"));
     }
 
-    if (ret["length"] !== undefined) {
-      if (ret["minLength"] !== undefined) {
+    if (ret.length !== undefined) {
+      if (minLength !== undefined) {
         errors.push(new ParamError(
           "length and minLength cannot appear together"));
       }
-      if (ret["maxLength"] !== undefined) {
+      if (maxLength !== undefined) {
         errors.push(new ParamError(
           "length and maxLength cannot appear together"));
       }
     }
 
-    if (ret["maxInclusive"] !== undefined) {
-      if (ret["maxExclusive"] !== undefined) {
+    if (maxInclusive !== undefined) {
+      if (maxExclusive !== undefined) {
         errors.push(new ParamError(
           "maxInclusive and maxExclusive cannot appear together"));
       }
 
       // maxInclusive, minExclusive
-      if (ret["minExclusive"] >= ret["maxInclusive"]) {
+      if (minExclusive >= maxInclusive) {
         errors.push(new ParamError(
           "minExclusive must be less than maxInclusive"));
       }
     }
 
-    if (ret["minInclusive"] !== undefined) {
-      if (ret["minExclusive"] !== undefined) {
+    if (minInclusive !== undefined) {
+      if (minExclusive !== undefined) {
         errors.push(new ParamError(
           "minInclusive and minExclusive cannot appear together"));
       }
 
       // maxInclusive, minInclusive
-      if (ret["minInclusive"] > ret["maxInclusive"]) {
+      if (minInclusive > maxInclusive) {
         errors.push(new ParamError(
           "minInclusive must be less than or equal to maxInclusive"));
       }
 
       // maxExclusive, minInclusive
-      if (ret["minInclusive"] >= ret["maxExclusive"]) {
+      if (minInclusive >= maxExclusive) {
         errors.push(new ParamError(
           "minInclusive must be less than maxExclusive"));
       }
     }
 
     // maxExclusive, minExclusive
-    if (ret["minExclusive"] > ret["maxExclusive"]) {
+    if (minExclusive > maxExclusive) {
       errors.push(new ParamError(
         "minExclusive must be less than or equal to maxExclusive"));
     }
 
-    /* tslint:enable: no-string-literal */
     if (errors.length !== 0) {
       throw new ParameterParsingError(location, errors);
     }
@@ -638,57 +604,25 @@ abstract class Base<T> implements Datatype<T> {
 
   equal(value: string, schemaValue: ParsedValue<T>,
         context?: Context): boolean {
-    let converted: T;
-
-    try {
-      // We pass an empty string as location because we do not generally keep
-      // track of locations in the XML file being validated. The
-      // ValueValidationError is caught and turned into a boolean below so the
-      // specific location is not important here.
-      converted = this.convertValue("", value, context);
-    }
-    catch (ex) {
-      // An invalid value cannot be equal.
-      if (ex instanceof ValueValidationError) {
-        return false;
-      }
-      throw ex;
-    }
-
-    return converted === schemaValue.value;
+    const converted = this.convertValue(value, context);
+    return converted instanceof Array ? false :
+      converted === schemaValue.value;
   }
 
-  disallows(value: string, params?: ParsedParams,
+  disallows(value: string, params: ParsedParams,
             context?: Context): ValueError[] | false {
     if (!this.regexp.test(value)) {
       return [new ValueError(this.typeErrorMsg)];
     }
 
-    let converted: any;
-    try {
-      // We pass an empty string as location because we do not generally keep
-      // track of locations in the XML file being validated. The
-      // ValueValidationError is caught below and its errors are extracted and
-      // returned.
-      converted = this.convertValue("", value, context);
-    }
-    catch (ex) {
-      // An invalid value is not allowed.
-      if (ex instanceof ValueValidationError) {
-        return ex.errors;
-      }
-      throw ex;
-    }
-
-    if (params === undefined || Object.keys(params).length === 0) {
-      // If no params were passed, get the default params.
-      // tslint:disable-next-line:no-parameter-reassignment
-      params = this.defaultParams;
-    }
-
     const paramNames = Object.keys(params);
     if (paramNames.length === 0) {
       return false;
+    }
+
+    const converted = this.convertValue(value, context);
+    if (converted instanceof Array) {
+      return converted;
     }
 
     const errors: ValueError[] = [];
@@ -709,9 +643,8 @@ abstract class Base<T> implements Datatype<T> {
 //
 
 abstract class CommonStringBased extends Base<string> {
-  protected convertValue(location: string, value: string,
-                         context?: Context): string {
-    return this.processWhitespace(value);
+  protected convertValue(value: string): string {
+    return value.trim().replace(/\s+/g, " ");
   }
 }
 
@@ -719,7 +652,6 @@ abstract class CommonStringBased extends Base<string> {
 class string_ extends CommonStringBased {
   readonly name: string = "string";
   readonly typeErrorMsg: string = "value is not a string";
-  readonly processWhitespace: WhitespaceHandler = whitespacePreserve;
   readonly validParams: Parameter[] = [lengthP, minLengthP, maxLengthP,
                                        patternP];
   readonly needsContext: boolean = false;
@@ -727,18 +659,21 @@ class string_ extends CommonStringBased {
   // etc.).
   readonly regexp: RegExp = /^[^]*$/;
 
+  protected convertValue(value: string): string {
+    return value;
+  }
+
   // This is a specialized version of disallows that avoids bothering with tests
   // that don't affect the results. string and some of its immediate derivates
   // are not affected by their regexp, nor do they have default parameters that
   // affect what values are allowed.
-  disallows(value: string, params?: ParsedParams,
-            context?: Context): ValueError[] | false {
-    if (params === undefined || Object.keys(params).length === 0) {
+  disallows(value: string, params: ParsedParams): ValueError[] | false {
+    if (Object.keys(params).length === 0) {
       // The default params don't disallow anything.
       return false;
     }
 
-    const converted = this.convertValue("", value, context);
+    const converted = this.convertValue(value);
     const errors: ValueError[] = [];
     // We use Object.keys because we don't know the precise type of params.
     for (const name of Object.keys(params)) {
@@ -757,23 +692,28 @@ class normalizedString extends string_ {
   readonly name: string = "normalizedString";
   readonly typeErrorMsg: string =
     "string contains a tab, carriage return or newline";
-  readonly processWhitespace: WhitespaceHandler = whitespaceReplace;
+
+  protected convertValue(value: string): string {
+    return value.replace(/\s+/g, " ");
+  }
 }
 
 class token extends normalizedString {
   readonly name: string = "token";
   readonly typeErrorMsg: string = "not a valid token";
-  readonly processWhitespace: WhitespaceHandler = whitespaceCollapse;
+
+  protected convertValue(value: string): string {
+    return value.trim().replace(/\s+/g, " ");
+  }
 }
 
 class tokenInternal extends token {
-  disallows(value: string, params?: ParsedParams,
-            context?: Context): ValueError[] | false {
+  disallows(value: string, params: ParsedParams): ValueError[] | false {
     if (!this.regexp.test(value)) {
       return [new ValueError(this.typeErrorMsg)];
     }
 
-    return super.disallows(value, params, context);
+    return super.disallows(value, params);
   }
 }
 
@@ -846,7 +786,6 @@ class decimal extends Base<number> {
   readonly name: string = "decimal";
   readonly typeErrorMsg: string = "value not a decimal number";
   readonly regexp: RegExp = new RegExp(`^\\s*${decimalPattern}\\s*$`);
-  readonly processWhitespace: WhitespaceHandler = whitespaceCollapse;
   readonly needsContext: boolean = false;
 
   readonly validParams: Parameter[] = [
@@ -854,7 +793,7 @@ class decimal extends Base<number> {
     maxExclusiveP, maxInclusiveP,
   ];
 
-  convertValue(location: string, value: string): number {
+  convertValue(value: string): number {
     // We don't need to do white-space processing on the value.
     return Number(value);
   }
@@ -874,54 +813,73 @@ class integer extends decimal {
     maxInclusiveP,
   ];
 
+  protected _defaultParams?: ParsedParams;
+
+  get defaultParams(): ParsedParams {
+    if (this._defaultParams === undefined) {
+      const params = this._defaultParams = Object.create(null);
+      const { highestVal, lowestVal } = this;
+      if (highestVal !== undefined) {
+        params.maxInclusive = highestVal;
+      }
+
+      if (lowestVal !== undefined) {
+        params.minInclusive = lowestVal;
+      }
+
+      return params;
+    }
+
+    return this._defaultParams;
+  }
+
   parseParams(location: string, params?: RawParameter[]): ParsedParams {
-    let me: any;
-    let mi: any;
     const ret = super.parseParams(location, params);
 
     function fail(message: string): never {
       throw new ParameterParsingError(location, [new ParamError(message)]);
     }
 
-    const highestVal = this.highestVal;
+    const { highestVal, lowestVal } = this;
     if (highestVal !== undefined) {
-      /* tslint:disable:no-string-literal */
-      if (ret["maxExclusive"] !== undefined) {
-        me = ret["maxExclusive"];
+      const me = ret.maxExclusive;
+      if (me !== undefined) {
         if (me > highestVal) {
           fail(`maxExclusive cannot be greater than ${highestVal}`);
         }
       }
-      else if (ret["maxInclusive"] !== undefined) {
-        mi = ret["maxInclusive"];
-        if (mi > highestVal) {
-          fail(`maxInclusive cannot be greater than ${highestVal}`);
-        }
-      }
       else {
-        ret["maxInclusive"] = highestVal;
+        const mi = ret.maxInclusive;
+        if (mi !== undefined) {
+          if (mi > highestVal) {
+            fail(`maxInclusive cannot be greater than ${highestVal}`);
+          }
+        }
+        else {
+          ret.maxInclusive = highestVal;
+        }
       }
     }
 
-    const lowestVal = this.lowestVal;
     if (lowestVal !== undefined) {
-      if (ret["minExclusive"] !== undefined) {
-        me = ret["minExclusive"];
+      const me = ret.minExclusive;
+      if (me !== undefined) {
         if (me < lowestVal) {
           fail(`minExclusive cannot be lower than ${this.lowestVal}`);
         }
       }
-      else if (ret["minInclusive"] !== undefined) {
-        mi = ret["minInclusive"];
-        if (mi < lowestVal) {
-          fail(`minInclusive cannot be lower than ${this.lowestVal}`);
+      else {
+        const mi = ret.minInclusive;
+        if (mi !== undefined) {
+          if (mi < lowestVal) {
+            fail(`minInclusive cannot be lower than ${this.lowestVal}`);
+          }
+        }
+        else {
+          ret.minInclusive = lowestVal;
         }
       }
-      else {
-        ret["minInclusive"] = lowestVal;
-      }
     }
-    /* tslint:enable:no-string-literal */
 
     return ret;
   }
@@ -1049,7 +1007,7 @@ class boolean_ extends Base<boolean> {
   readonly regexp: RegExp = /^\s*(1|0|true|false)\s*$/;
   readonly validParams: Parameter[] = [patternP];
   readonly needsContext: boolean = false;
-  convertValue(_location: string, value: string): boolean {
+  convertValue(value: string): boolean {
     return (value === "1" || value === "true");
   }
 }
@@ -1073,7 +1031,7 @@ class base64Binary extends Base<string> {
   readonly needsContext: boolean = false;
   readonly validParams: Parameter[] =
     [lengthP, minLengthP, maxLengthP, patternP];
-  convertValue(_location: string, value: string): string {
+  convertValue(value: string): string {
     // We don't need to actually decode it.
     return value.replace(/\s/g, "");
   }
@@ -1090,7 +1048,7 @@ class hexBinary extends Base<string> {
   readonly needsContext: boolean = false;
   readonly validParams: Parameter[] =
     [lengthP, minLengthP, maxLengthP, patternP];
-  convertValue(_location: string, value: string): string {
+  convertValue(value: string): string {
     return value;
   }
 
@@ -1113,29 +1071,12 @@ class float_ extends Base<number> {
     patternP, minInclusiveP, minExclusiveP, maxInclusiveP, maxExclusiveP,
   ];
 
-  convertValue(_location: string, value: string, context?: Context): number {
+  convertValue(value: string): number {
     return convertToInternalNumber(value);
   }
 
-  equal(value: string, schemaValue: ParsedValue<number>,
-        context?: Context): boolean {
-    let converted: number;
-
-    try {
-      // We pass an empty string as location because we do not generally keep
-      // track of locations in the XML file being validated. The
-      // ValueValidationError is caught and turned into a boolean below so the
-      // specific location is not important here.
-      converted = this.convertValue("", value, context);
-    }
-    catch (ex) {
-      // An invalid value cannot be equal.
-      if (ex instanceof ValueValidationError) {
-        return false;
-      }
-      throw ex;
-    }
-
+  equal(value: string, schemaValue: ParsedValue<number>): boolean {
+    const converted = this.convertValue(value);
     // In the IEEE 754-1985 standard, which is what XMLSChema 1.0 follows, NaN
     // is equal to NaN. In JavaScript NaN is equal to nothing, not even itself.
     // So we need to handle this difference.
@@ -1160,11 +1101,39 @@ class QName extends Base<string> {
   readonly needsContext: boolean = true;
   readonly validParams: Parameter[] =
     [patternP, lengthP, minLengthP, maxLengthP];
-  convertValue(location: string, value: string, context: Context): string {
-    const ret = context.resolver.resolveName(this.processWhitespace(value));
+
+  disallows(value: string, params: ParsedParams,
+            context: Context): ValueError[] | false {
+    if (!this.regexp.test(value)) {
+      return [new ValueError(this.typeErrorMsg)];
+    }
+
+    const converted = this.convertValue(value, context);
+    if (converted instanceof Array) {
+      return converted;
+    }
+
+    const paramNames = Object.keys(params);
+    if (paramNames.length === 0) {
+      return false;
+    }
+
+    const errors: ValueError[] = [];
+    for (const name of paramNames) {
+      const param = PARAM_NAME_TO_OBJ[name];
+      const err = param.isInvalidValue(converted, params[name], this);
+      if (err) {
+        errors.push(err);
+      }
+    }
+
+    return (errors.length !== 0) ? errors : false;
+  }
+
+  convertValue(value: string, context: Context): string | ValueError[] {
+    const ret = context.resolver.resolveName(value.trim());
     if (ret === undefined) {
-      throw new ValueValidationError(location,
-        [new ValueError(`cannot resolve the name ${value}`)]);
+      return [new ValueError(`cannot resolve the name ${value}`)];
     }
 
     return `{${ret.ns}}${ret.name}`;
@@ -1179,11 +1148,39 @@ class NOTATION extends Base<string> {
   readonly needsContext: boolean = true;
   readonly validParams: Parameter[] =
     [patternP, lengthP, minLengthP, maxLengthP];
-  convertValue(location: string, value: string, context: Context): string {
-    const ret = context.resolver.resolveName(this.processWhitespace(value));
+
+  disallows(value: string, params: ParsedParams,
+            context: Context): ValueError[] | false {
+    if (!this.regexp.test(value)) {
+      return [new ValueError(this.typeErrorMsg)];
+    }
+
+    const converted = this.convertValue(value, context);
+    if (converted instanceof Array) {
+      return converted;
+    }
+
+    const paramNames = Object.keys(params);
+    if (paramNames.length === 0) {
+      return false;
+    }
+
+    const errors: ValueError[] = [];
+    for (const name of paramNames) {
+      const param = PARAM_NAME_TO_OBJ[name];
+      const err = param.isInvalidValue(converted, params[name], this);
+      if (err) {
+        errors.push(err);
+      }
+    }
+
+    return (errors.length !== 0) ? errors : false;
+  }
+
+  convertValue(value: string, context: Context): string | ValueError[] {
+    const ret = context.resolver.resolveName(value.trim());
     if (ret === undefined) {
-      throw new ValueValidationError(location,
-        [new ValueError(`cannot resolve the name ${value}`)]);
+      return [new ValueError(`cannot resolve the name ${value}`)];
     }
 
     return `{${ret.ns}}${ret.name}`;
@@ -1290,7 +1287,7 @@ class dateTime extends CommonStringBased {
     `T${timePattern}${tzPattern}?\\s*$`);
   readonly needsContext: boolean = false;
   readonly validParams: Parameter[] = [patternP];
-  disallows(value: string, params?: ParsedParams): ValueError[] | false {
+  disallows(value: string, params: ParsedParams): ValueError[] | false {
     const ret = super.disallows(value, params);
     if (ret instanceof Array) {
       return ret;
@@ -1310,7 +1307,7 @@ class time extends CommonStringBased {
   readonly regexp: RegExp = new RegExp(`^\\s*${timePattern}${tzPattern}?\\s*$`);
   readonly validParams: Parameter[] = [patternP];
   readonly needsContext: boolean = false;
-  disallows(value: string, params?: ParsedParams): ValueError[] | false {
+  disallows(value: string, params: ParsedParams): ValueError[] | false {
     const ret = super.disallows(value, params);
     if (ret) {
       return ret;
@@ -1332,7 +1329,7 @@ class date extends CommonStringBased {
     `^\\s*${yearPattern}-${monthPattern}-${domPattern}${tzPattern}?\\s*$`);
   readonly needsContext: boolean = false;
   readonly validParams: Parameter[] = [patternP];
-  disallows(value: string, params?: ParsedParams): ValueError[] | false {
+  disallows(value: string, params: ParsedParams): ValueError[] | false {
     const ret = super.disallows(value, params);
     if (ret) {
       return ret;
@@ -1358,7 +1355,7 @@ class gYearMonth extends CommonStringBased {
     `^\\s*${yearPattern}-${monthPattern}${tzPattern}?\\s*$`);
   readonly validParams: Parameter[] = [patternP];
   readonly needsContext: boolean = false;
-  disallows(value: string, params?: ParsedParams): ValueError[] | false {
+  disallows(value: string, params: ParsedParams): ValueError[] | false {
     const ret = super.disallows(value, params);
     if (ret) {
       return ret;
@@ -1383,7 +1380,7 @@ class gYear extends CommonStringBased {
   readonly regexp: RegExp = new RegExp(`^\\s*${yearPattern}${tzPattern}?\\s*$`);
   readonly needsContext: boolean = false;
   readonly validParams: Parameter[] = [patternP];
-  disallows(value: string, params?: ParsedParams): ValueError[] | false {
+  disallows(value: string, params: ParsedParams): ValueError[] | false {
     const ret = super.disallows(value, params);
     if (ret) {
       return ret;
@@ -1409,7 +1406,7 @@ class gMonthDay extends CommonStringBased {
     `^\\s*${monthPattern}-${domPattern}${tzPattern}?\\s*$`);
   readonly needsContext: boolean = false;
   readonly validParams: Parameter[] = [patternP];
-  disallows(value: string, params?: ParsedParams): ValueError[] | false {
+  disallows(value: string, params: ParsedParams): ValueError[] | false {
     const ret = super.disallows(value, params);
     if (ret) {
       return ret;
@@ -1436,7 +1433,7 @@ class gDay extends CommonStringBased {
   readonly regexp: RegExp = new RegExp(`^\\s*${domPattern}${tzPattern}?\\s*$`);
   readonly needsContext: boolean = false;
   readonly validParams: Parameter[] = [patternP];
-  disallows(value: string, params?: ParsedParams): ValueError[] | false {
+  disallows(value: string, params: ParsedParams): ValueError[] | false {
     const ret = super.disallows(value, params);
     if (ret) {
       return ret;
@@ -1464,7 +1461,7 @@ class gMonth extends CommonStringBased {
     new RegExp(`^\\s*${monthPattern}${tzPattern}?\\s*$`);
   readonly needsContext: boolean = false;
   readonly validParams: Parameter[] = [patternP];
-  disallows(value: string, params?: ParsedParams): ValueError[] | false {
+  disallows(value: string, params: ParsedParams): ValueError[] | false {
     const ret = super.disallows(value, params);
     if (ret) {
       return ret;

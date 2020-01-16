@@ -17,41 +17,6 @@ import { RELAXNG_URI } from "./simplifier/util";
 
 export type ConcreteNode = Element | Text;
 
-export abstract class Node {
-  abstract readonly text: string;
-  abstract readonly kind: "element" | "text";
-
-  protected _parent: Element | undefined;
-
-  get parent(): Element | undefined {
-    return this._parent;
-  }
-
-  set parent(value: Element | undefined) {
-    this.setParent(value);
-  }
-
-  protected setParent(value: Element | undefined): void {
-    this._parent = value;
-  }
-
-  remove(this: ConcreteNode): void {
-    const parent = this.parent;
-    if (parent !== undefined) {
-      parent.removeChild(this);
-    }
-  }
-
-  replaceWith(this: ConcreteNode, replacement: ConcreteNode): void {
-    const parent = this.parent;
-    if (parent === undefined) {
-      throw new Error("no parent");
-    }
-
-    parent.replaceChildWith(this, replacement);
-  }
-}
-
 const emptyNS = Object.create(null);
 
 /**
@@ -60,12 +25,14 @@ const emptyNS = Object.create(null);
  * This constructor will insert the created object into the parent automatically
  * if the parent is provided.
  */
-export class Element extends Node {
+export class Element {
   readonly kind: "element" = "element";
   /**
    * The path of the element in its tree.
    */
   private _path: string | undefined;
+
+  private _parent: Element | undefined;
 
   prefix: string;
 
@@ -89,8 +56,7 @@ export class Element extends Node {
               uri: string,
               ns: Record<string, string>,
               attributes: Record<string, SaxesAttribute>,
-              readonly children: ConcreteNode[] = []) {
-    super();
+              readonly children: ConcreteNode[]) {
     this.prefix = prefix;
     this.local = local;
     this.uri = uri;
@@ -99,6 +65,9 @@ export class Element extends Node {
     this.attributes = attributes;
 
     for (const child of children) {
+      if (child.parent !== undefined) {
+        child.parent.removeChild(child);
+      }
       child.parent = this;
     }
   }
@@ -113,7 +82,7 @@ export class Element extends Node {
       children);
   }
 
-  static makeElement(name: string): Element {
+  static makeElement(name: string, children: ConcreteNode[]): Element {
     return new Element(
       "",
       name,
@@ -121,7 +90,16 @@ export class Element extends Node {
       // We always pass the same object as ns. So we save an unnecessary object
       // creation.
       emptyNS,
-      Object.create(null));
+      Object.create(null),
+      children);
+  }
+
+  get parent(): Element | undefined {
+    return this._parent;
+  }
+
+  set parent(value: Element | undefined) {
+    this.setParent(value);
   }
 
   setParent(value: Element | undefined): void {
@@ -140,7 +118,6 @@ export class Element extends Node {
     // }
 
     this._path = undefined; // This becomes void.
-    // We inline super.setParent here:
     this._parent = value;
   }
 
@@ -167,7 +144,16 @@ export class Element extends Node {
   }
 
   get text(): string {
-    return this.children.map((x) => x.text).join("");
+    // Testing for this special case does payoff.
+    if (this.children.length === 1) {
+      return this.children[0].text;
+    }
+
+    let ret = "";
+    for (const child of this.children) {
+      ret += child.text;
+    }
+    return ret;
   }
 
   /**
@@ -284,13 +270,6 @@ export class Element extends Node {
     this.children.splice(index, 0, ...toInsert);
   }
 
-  empty(): void {
-    const children = this.children.splice(0, this.children.length);
-    for (const child of children) {
-      child.parent = undefined;
-    }
-  }
-
   /**
    * Gets all the children from another element and append them to this
    * element. This is a faster operation than done through other means.
@@ -342,11 +321,11 @@ export class Element extends Node {
     }
 
     this.attributes[name] = {
-      name: name,
+      name,
       prefix: "",
       local: name,
       uri: "",
-      value: value,
+      value,
     };
   }
 
@@ -384,13 +363,31 @@ export class Element extends Node {
   }
 
   clone(): Element {
-    // The strategy of pre-filling the new object and then updating the keys
-    // appears to be faster than inserting new keys one by one.
-    const attributes = Object.assign(Object.create(null), this.attributes);
-    for (const key of Object.keys(attributes)) {
-      // We do not use Object.create(null) here because there's no advantage
-      // to it.
-      attributes[key] = {...attributes[key]};
+    const newAttributes: Record<string, SaxesAttribute> = Object.create(null);
+    const { attributes } = this;
+    const keys = Object.keys(attributes);
+    if (keys.length !== 0) {
+      for (const key of keys) {
+        // We do not use Object.create(null) here because there's no advantage
+        // to it.
+        newAttributes[key] = {...attributes[key]};
+      }
+    }
+
+    // This switch provides a significant improvement.
+    let { children } = this;
+    switch (children.length) {
+      case 0:
+        break;
+      case 1:
+        children = [children[0].clone()];
+        break;
+      case 2:
+        children = [children[0].clone(), children[1].clone()];
+        break;
+      default:
+        // This actually does not happen in the current code.
+        children = children.map(child => child.clone());
     }
 
     return new Element(
@@ -398,19 +395,19 @@ export class Element extends Node {
       this.local,
       this.uri,
       this.ns,
-      attributes,
-      this.children.map((child) => child.clone()));
+      newAttributes,
+      children);
   }
 }
 
-export class Text extends Node {
+export class Text {
   readonly kind: "text" = "text";
+  parent: Element | undefined;
 
   /**
    * @param text The textual value.
    */
   constructor(readonly text: string) {
-    super();
   }
 
   clone(): Text {
@@ -418,11 +415,11 @@ export class Text extends Node {
   }
 }
 
-export function isElement(node: Node): node is Element {
+export function isElement(node: ConcreteNode): node is Element {
   return node.kind === "element";
 }
 
-export function isText(node: Node): node is Text {
+export function isText(node: ConcreteNode): node is Text {
   return node.kind === "text";
 }
 
@@ -430,6 +427,7 @@ export interface ValidatorI {
   onopentag(node: SaxesTag): void;
   onclosetag(node: SaxesTag): void;
   ontext(text: string): void;
+  onend(): void;
 }
 
 class SaxesNameResolver implements NameResolver {
@@ -491,12 +489,21 @@ export class Validator implements ValidatorI {
 
   onopentag(node: SaxesTag): void {
     const { attributes } = node;
-    const params: string[] = [node.uri, node.local];
-    for (const name of Object.keys(attributes)) {
-      const { uri, prefix, local, value } = attributes[name] as SaxesAttribute;
-      // xmlns="..." or xmlns:q="..."
-      if (!(name === "xmlns" || prefix === "xmlns")) {
-        params.push(uri, local, value);
+    const keys = Object.keys(attributes);
+    // Pre-allocate an array of the right size, instead of reallocating
+    // a bunch of times.
+    // tslint:disable-next-line:prefer-array-literal
+    const params: string[] = new Array(2 + keys.length);
+    params[0] = node.uri;
+    params[1] = node.local;
+    let ix = 2;
+    for (const name of keys) {
+      const { uri, local, value } = attributes[name] as SaxesAttribute;
+      // Skip XML namespace declarations
+      if (uri !== XMLNS_NAMESPACE) {
+        params[ix++] = uri;
+        params[ix++] = local;
+        params[ix++] = value;
       }
     }
     this.fireEvent("startTagAndAttributes", params);
@@ -508,6 +515,13 @@ export class Validator implements ValidatorI {
 
   ontext(text: string): void {
     this.fireEvent("text", [text]);
+  }
+
+  onend(): void {
+    const result = this.walker.end();
+    if (result !== false) {
+      this.errors.push(...result);
+    }
   }
 }
 
@@ -521,6 +535,9 @@ class NullValidator implements ValidatorI {
 
   // tslint:disable-next-line:no-empty
   ontext(): void {}
+
+  // tslint:disable-next-line:no-empty
+  onend(): void {}
 }
 
 /**
@@ -543,6 +560,7 @@ export class BasicParser {
     saxesParser.onopentag = this.onopentag.bind(this);
     saxesParser.onclosetag = this.onclosetag.bind(this);
     saxesParser.ontext = this.ontext.bind(this);
+    saxesParser.onend = this.onend.bind(this);
     this.stack = [{
       // We cheat. The node field of the top level stack item won't ever be
       // accessed.
@@ -601,6 +619,10 @@ export class BasicParser {
     }
 
     this.stack[this.stack.length - 1].children.push(new Text(text));
+  }
+
+  onend(): void {
+    this.validator.onend();
   }
 }
 

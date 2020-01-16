@@ -4,7 +4,7 @@
  * @license MPL 2.0
  * @copyright 2013, 2014 Mangalam Research Center for Buddhist Languages
  */
-import { Element, isElement } from "../parser";
+import { Element } from "../parser";
 import { removeUnreferencedDefs } from "./util";
 
 // These are elements that cannot contain notAllowed and cannot contain
@@ -12,32 +12,36 @@ import { removeUnreferencedDefs } from "./util";
 const skip = new Set(["name", "anyName", "nsName", "param", "empty",
                       "text", "value", "notAllowed", "ref"]);
 
-function walk(el: Element, refs: Set<string>): void {
-  const local = el.local;
+function walk(el: Element, ix: number, refs: Set<string>): void {
+  const { local, children } = el;
+
+  // Skip those elements that are empty or that cannot contain notAllowed.
+  if (children.length === 0 || skip.has(local)) {
+    return;
+  }
 
   // Since we walk the children first, all the transformations that pertain to
   // the children are applied before we deal with the parent, and there should
   // not be any need to process the tree multiple times.
-  for (const child of el.children) {
-    if (!isElement(child)) {
-      continue;
-    }
 
-    // Skip those elements that cannot contain notAllowed.
-    if (skip.has(child.local)) {
-      continue;
-    }
-
-    walk(child, refs);
+  // At this stage of processing, most elements contain at most two
+  // children. And due to the skip.has(local) test above, these children must be
+  // Element objects. (<grammar> is the exception.)
+  let [first, second] = children as [Element, Element];
+  walk(first, 0, refs);
+  if (second !== undefined) {
+    walk(second, 1, refs);
   }
 
-  // Elements may be removed in the above loop.
-  if (el.children.length === 0) {
+  // Elements may be removed by the above walks.
+  if (children.length === 0) {
     return;
   }
 
-  const firstNA = (el.children[0] as Element).local === "notAllowed";
-  const second = el.children[1] as Element;
+  // Reacquire.
+  ([first, second] = children as [Element, Element]);
+
+  const firstNA = first.local === "notAllowed";
   const secondNA = second !== undefined && second.local === "notAllowed";
 
   if (firstNA || secondNA) {
@@ -49,14 +53,14 @@ function walk(el: Element, refs: Set<string>): void {
       case "choice":
         if (firstNA && secondNA) {
           // A choice with two notAllowed is replaced with notAllowed.
-          parent.replaceChildWith(el, Element.makeElement("notAllowed"));
+          parent.replaceChildAt(ix, Element.makeElement("notAllowed", []));
         }
         else {
           // A choice with exactly one notAllowed is replaced with the other
           // child of the choice.
-          parent.replaceChildWith(el, el.children[firstNA ? 1 : 0] as Element);
+          parent.replaceChildAt(ix, firstNA ? second : first);
         }
-        break;
+        return;
       case "group":
       case "oneOrMore":
       case "interleave":
@@ -64,30 +68,22 @@ function walk(el: Element, refs: Set<string>): void {
       case "list":
         // An attribute (or list, group, interleave, oneOrMore) with at least
         // one notAllowed is replaced with notAllowed.
-        parent.replaceChildWith(el, Element.makeElement("notAllowed"));
-        break;
+        parent.replaceChildAt(ix, Element.makeElement("notAllowed", []));
+        return;
       case "except":
         // An except with notAllowed is removed.
-        el.remove();
-        break;
+        parent!.removeChildAt(ix);
+        return;
       default:
     }
   }
 
-  if (el.parent === undefined) {
-    // We've been removed.
-    return;
+  if (first.local === "ref") {
+    refs.add(first.mustGetAttribute("name"));
   }
 
-  for (const child of el.children) {
-    if (!isElement(child)) {
-      continue;
-    }
-
-    const childLocal = child.local;
-    if (childLocal === "ref") {
-      refs.add(child.mustGetAttribute("name"));
-    }
+  if (second !== undefined && second.local === "ref") {
+    refs.add(second.mustGetAttribute("name"));
   }
 }
 
@@ -117,8 +113,13 @@ function walk(el: Element, refs: Set<string>): void {
  * @returns The new root of the tree.
  */
 export function step17(tree: Element): Element {
-  const refs = new Set();
-  walk(tree, refs);
+  const refs: Set<string> = new Set();
+
+  // The top element is necessarily <grammar>, and it has only element children.
+  let ix = 0;
+  for (const child of tree.children) {
+    walk(child as Element, ix++, refs);
+  }
 
   removeUnreferencedDefs(tree, refs);
 

@@ -4,3 +4,6 @@
 *_flymake.*
 /node_modules
 /localConfig.js
+
+.idea
+salve-ds-*.tar.gz

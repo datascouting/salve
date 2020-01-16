@@ -110,27 +110,22 @@ class InterleaveWalker implements InternalWalker {
   //
   fireEvent(name: string, params: string[],
             nameResolver: NameResolver): InternalFireEventResult {
-    const evIsAttributeEvent = isAttributeEvent(name);
-    if (evIsAttributeEvent && !this.hasAttrs) {
+    if (!this.hasAttrs && isAttributeEvent(name)) {
       return new InternalFireEventResult(false);
     }
 
-    // This is useful because it is possible for fireEvent to be called
-    // after end() has been called.
-    if (this.ended) {
-      return new InternalFireEventResult(false);
-    }
+    //
+    // fireEvent is not called after ended is true
+    // if (this.ended) {
+    //   return new InternalFireEventResult(false);
+    // }
+    //
 
-    const walkerA = this.walkerA;
-    const walkerB = this.walkerB;
+    const { walkerA, walkerB } = this;
 
     const retA = walkerA.fireEvent(name, params, nameResolver);
     if (retA.matched) {
-      if (evIsAttributeEvent) {
-        this.canEndAttribute =
-          walkerA.canEndAttribute && walkerB.canEndAttribute;
-      }
-
+      this.canEndAttribute = walkerA.canEndAttribute && walkerB.canEndAttribute;
       this.canEnd = walkerA.canEnd && walkerB.canEnd;
 
       // The constraints on interleave do not allow for two child patterns of
@@ -142,11 +137,8 @@ class InterleaveWalker implements InternalWalker {
 
     const retB = walkerB.fireEvent(name, params, nameResolver);
     if (retB.matched) {
-      if (evIsAttributeEvent) {
-        this.canEndAttribute =
-          walkerA.canEndAttribute && walkerB.canEndAttribute;
-      }
-
+      this.canEndAttribute =
+        walkerA.canEndAttribute && walkerB.canEndAttribute;
       this.canEnd = walkerA.canEnd && walkerB.canEnd;
 
       return retB;
@@ -177,7 +169,7 @@ class InterleaveWalker implements InternalWalker {
   }
 
   endAttributes(): EndResult {
-    if (this.ended || this.canEndAttribute) {
+    if (this.canEndAttribute) {
       return false;
     }
 

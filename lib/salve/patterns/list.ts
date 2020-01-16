@@ -9,24 +9,16 @@ import { NameResolver } from "../name_resolver";
 import { EndResult, EventSet, InternalFireEventResult, InternalWalker,
          OneSubpattern } from "./base";
 import { Define } from "./define";
-import { Ref } from "./ref";
 
 /**
  * List pattern.
  */
 export class List extends OneSubpattern {
-  _computeHasEmptyPattern(): boolean {
-    return this.pat.hasEmptyPattern();
-  }
-
   // We override these because lists cannot contain attributes so there's
   // no point in caching _hasAttrs's result.
-  _prepare(definitions: Map<string, Define>,
-           namespaces: Set<string>): Ref[] | undefined {
-    const ret = this.pat._prepare(definitions, namespaces);
-    this._cachedHasEmptyPattern = this._computeHasEmptyPattern();
-
-    return ret;
+  _prepare(definitions: Map<string, Define>, namespaces: Set<string>): void {
+    this.pat._prepare(definitions, namespaces);
+    this._cachedHasEmptyPattern = this.pat.hasEmptyPattern();
   }
 
   hasAttrs(): boolean {

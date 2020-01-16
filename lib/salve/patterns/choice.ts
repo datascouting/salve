@@ -16,7 +16,7 @@ import { Empty } from "./empty";
  * A pattern for ``<choice>``.
  */
 export class Choice extends TwoSubpatterns {
-  optional: boolean;
+  private readonly optional: boolean;
 
   constructor(xmlPath: string, patA: Pattern, patB: Pattern) {
     super(xmlPath, patA, patB);
@@ -125,36 +125,34 @@ class ChoiceWalker implements InternalWalker {
 
   fireEvent(name: string, params: string[],
             nameResolver: NameResolver): InternalFireEventResult {
-    if (this.deactivateA && this.deactivateB) {
+    //
+    // It cannot happen that fireEvent be called when deactivateA and
+    // deactivateB are true at the same time.
+    //
+    // if (this.deactivateA && this.deactivateB) {
+    //   return new InternalFireEventResult(false);
+    // }
+
+    if (!this.hasAttrs && isAttributeEvent(name)) {
       return new InternalFireEventResult(false);
     }
 
-    const evIsAttributeEvent = isAttributeEvent(name);
-    if (evIsAttributeEvent && !this.hasAttrs) {
-      return new InternalFireEventResult(false);
-    }
-
+    const { walkerA, walkerB } = this;
     const retA = this.deactivateA ? new InternalFireEventResult(false) :
-      this.walkerA.fireEvent(name, params, nameResolver);
+      walkerA.fireEvent(name, params, nameResolver);
     const retB = this.deactivateB ? new InternalFireEventResult(false) :
-      this.walkerB.fireEvent(name, params, nameResolver);
+      walkerB.fireEvent(name, params, nameResolver);
 
     if (retA.matched) {
       if (!retB.matched) {
         this.deactivateB = true;
-        if (evIsAttributeEvent) {
-          this.canEndAttribute = this.walkerA.canEndAttribute;
-        }
-
-        this.canEnd = this.walkerA.canEnd;
+        this.canEndAttribute = walkerA.canEndAttribute;
+        this.canEnd = walkerA.canEnd;
       }
       else {
-        if (evIsAttributeEvent) {
-          this.canEndAttribute = this.walkerA.canEndAttribute ||
-            this.walkerB.canEndAttribute;
-        }
-
-        this.canEnd = this.walkerA.canEnd || this.walkerB.canEnd;
+        this.canEndAttribute = walkerA.canEndAttribute ||
+          walkerB.canEndAttribute;
+        this.canEnd = walkerA.canEnd || walkerB.canEnd;
       }
 
       return retA.combine(retB);
@@ -162,11 +160,8 @@ class ChoiceWalker implements InternalWalker {
 
     if (retB.matched) {
       this.deactivateA = true;
-      if (evIsAttributeEvent) {
-        this.canEndAttribute = this.walkerB.canEndAttribute;
-      }
-
-      this.canEnd = this.walkerB.canEnd;
+      this.canEndAttribute = walkerB.canEndAttribute;
+      this.canEnd = walkerB.canEnd;
     }
 
     return retB.combine(retA);
@@ -295,12 +290,15 @@ class OptionalChoiceWalker implements InternalWalker {
 
   fireEvent(name: string, params: string[],
             nameResolver: NameResolver): InternalFireEventResult {
-    if (this.ended) {
-      return new InternalFireEventResult(false);
-    }
+    //
+    // It cannot happen that fireEvent is called with ended true.
+    //
+    // if (this.ended) {
+    //   return new InternalFireEventResult(false);
+    // }
+    //
 
-    const evIsAttributeEvent = isAttributeEvent(name);
-    if (evIsAttributeEvent && !this.hasAttrs) {
+    if (!this.hasAttrs && isAttributeEvent(name)) {
       return new InternalFireEventResult(false);
     }
 
@@ -308,13 +306,11 @@ class OptionalChoiceWalker implements InternalWalker {
       return new InternalFireEventResult(true);
     }
 
-    const retB = this.walkerB.fireEvent(name, params, nameResolver);
+    const { walkerB } = this;
+    const retB = walkerB.fireEvent(name, params, nameResolver);
     if (retB.matched) {
-      if (evIsAttributeEvent) {
-        this.canEndAttribute = this.walkerB.canEndAttribute;
-      }
-
-      this.canEnd = this.walkerB.canEnd;
+      this.canEndAttribute = walkerB.canEndAttribute;
+      this.canEnd = walkerB.canEnd;
     }
 
     return retB;
@@ -331,11 +327,7 @@ class OptionalChoiceWalker implements InternalWalker {
   }
 
   endAttributes(): EndResult {
-    if (this.canEndAttribute) {
-      return false;
-    }
-
-    return this.walkerB.endAttributes();
+    return this.canEndAttribute ? false : this.walkerB.endAttributes();
   }
 }
 

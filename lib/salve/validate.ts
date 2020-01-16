@@ -6,11 +6,10 @@
  * @copyright Mangalam Research Center for Buddhist Languages
  */
 
-export const version: string = "9.1.1";
+export const version: string = "10.0.0-ds";
 
 export { eventsToTreeString, EventSet, Grammar, GrammarWalker,
-         BasePattern, RefError, FireEventResult,
-         EndResult } from "./patterns";
+         BasePattern, FireEventResult, EndResult } from "./patterns";
 
 export { ConversionResult, convertRNGToPattern, makeResourceLoader,
          ManifestEntry, Resource, ResourceLoader } from "./conversion";

@@ -4,7 +4,7 @@
  * @license MPL 2.0
  * @copyright Mangalam Research Center for Buddhist Languages
  */
-import { Datatype, RawParameter, registry } from "../datatypes";
+import { Datatype, ParsedParams, RawParameter, registry } from "../datatypes";
 import { ValidationError } from "../errors";
 import { TextEvent } from "../events";
 import { NameResolver } from "../name_resolver";
@@ -16,7 +16,8 @@ import { EndResult, EventSet, InternalFireEventResult, InternalWalker,
 export class Data extends Pattern {
   readonly datatype: Datatype;
   readonly rngParams?: RawParameter[];
-  private _params: any;
+  private _params?: ParsedParams;
+  private _allowsEmptyContent?: boolean;
 
   /**
    *
@@ -36,16 +37,17 @@ export class Data extends Pattern {
               readonly datatypeLibrary: string = "", params?: RawParameter[],
               readonly except?: Pattern) {
     super(xmlPath);
-    this.datatype = registry.get(this.datatypeLibrary).types[this.type];
-    if (this.datatype === undefined) {
+    const datatype = this.datatype =
+      registry.get(this.datatypeLibrary).types[this.type];
+    if (datatype === undefined) {
       throw new Error(`unknown type: ${type}`);
     }
     this.rngParams = params;
   }
 
-  get params(): any {
-    let ret: any = this._params;
-    if (ret != null) {
+  get params(): ParsedParams {
+    let ret = this._params;
+    if (ret !== undefined) {
       return ret;
     }
 
@@ -55,13 +57,23 @@ export class Data extends Pattern {
     return ret;
   }
 
-  allowsEmptyContent(): boolean {
-    return !(this.except !== undefined && this.except.hasEmptyPattern()) &&
-      !this.datatype.disallows("", this.params);
+  get allowsEmptyContent(): boolean {
+    let ret = this._allowsEmptyContent;
+
+    if (ret !== undefined) {
+      return ret;
+    }
+
+    const { except, params, datatype } = this;
+    ret = this._allowsEmptyContent =
+      !(except !== undefined && except.hasEmptyPattern()) &&
+      !datatype.disallows("", params);
+
+    return ret;
   }
 
   newWalker(): InternalWalker {
-    const allowsEmptyContent = this.allowsEmptyContent();
+    const { allowsEmptyContent } = this;
 
     // tslint:disable-next-line:no-use-before-declare
     return new DataWalker(this,
@@ -80,7 +92,7 @@ export class Data extends Pattern {
 class DataWalker implements InternalWalker {
   constructor(protected readonly el: Data,
               private readonly datatype: Datatype,
-              private readonly params: any,
+              private readonly params: ParsedParams,
               private readonly except: Pattern | undefined,
               private matched: boolean,
               public canEndAttribute: boolean,

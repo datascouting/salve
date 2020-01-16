@@ -4,75 +4,67 @@
  * @license MPL 2.0
  * @copyright 2013, 2014 Mangalam Research Center for Buddhist Languages
  */
-import { Element, isElement } from "../parser";
+import { Element } from "../parser";
 
 // These are elements that cannot contain empty.
 const skip = new Set(["name", "anyName", "nsName", "param", "empty",
                       "text", "value", "notAllowed", "ref"]);
 
-function groupHandler(el: Element, firstEmpty: boolean,
-                      secondEmpty: boolean): void {
-  if (firstEmpty && secondEmpty) {
-    // A group (or interleave) with two empty elements is replaced with empty.
-    el.replaceWith(Element.makeElement("empty"));
-  }
-  else {
-    // A group (or interleave) with only one empty element is replaced with
-    // the non-empty one.
-    el.replaceWith(el.children[firstEmpty ? 1 : 0] as Element);
-  }
-}
+function walk(el: Element, ix: number): void {
+  const { local, children } = el;
 
-type Handler = (el: Element, firstEmpty: boolean, secondEmpty: boolean) => void;
-
-const handlers: Record<string, Handler> = {
-  choice(el: Element, firstEmpty: boolean, secondEmpty: boolean): void {
-    if (secondEmpty) {
-      if (!firstEmpty) {
-        // If a choice has empty in the 2nd position, the children are
-        // swapped.
-        const tmp = el.children[0];
-        el.children[0] = el.children[1];
-        el.children[1] = tmp;
-      }
-      else {
-        // A choice with two empty elements is replaced with empty.
-        el.replaceWith(Element.makeElement("empty"));
-      }
-    }
-  },
-  group: groupHandler,
-  interleave: groupHandler,
-  oneOrMore(el: Element): void {
-    // A oneOrMore with an empty element is replaced with empty. (This won't
-    // be called if there are no empty elements in the oneOrMore so we don't
-    // test here.)
-    el.replaceWith(Element.makeElement("empty"));
-  },
-};
-
-function walk(el: Element): void {
-  for (const child of el.children) {
-    if (isElement(child) && !skip.has(child.local)) {
-      walk(child);
-    }
-  }
-
-  const handler = handlers[el.local];
-
-  if (handler === undefined) {
+  if (children.length === 0 || skip.has(local)) {
     return;
   }
 
-  const firstEmpty = (el.children[0] as Element).local === "empty";
-  const second = el.children[1] as Element;
-  const secondEmpty = (second !== undefined && second.local === "empty");
+  let [first, second] = children as [Element, Element];
+  walk(first, 0);
+  if (second !== undefined) {
+    walk(second, 1);
+  }
+
+  // The children may have changed.
+  ([first, second] = children as [Element, Element]);
+
+  const firstEmpty = first.local === "empty";
+  const secondEmpty = second !== undefined && second.local === "empty";
 
   if (!(firstEmpty || secondEmpty)) {
     return;
   }
 
-  handler(el, firstEmpty, secondEmpty);
+  switch (local) {
+    case "choice":
+      if (secondEmpty) {
+        if (!firstEmpty) {
+          // If a choice has empty in the 2nd position, the children are
+          // swapped.
+          children[0] = second;
+          children[1] = first;
+        }
+        else {
+          // A choice with two empty elements is replaced with empty.
+          el.parent!.replaceChildAt(ix, Element.makeElement("empty", []));
+        }
+      }
+      break;
+    case "group":
+    case "interleave":
+      el.parent!.replaceChildAt(ix,
+                                firstEmpty && secondEmpty ?
+                                // A group (or interleave) with two empty
+                                // elements is replaced with empty.
+                                Element.makeElement("empty", []) :
+                                // A group (or interleave) with only one empty
+                                // element is replaced with the non-empty one.
+                                (firstEmpty ? second : first));
+      break;
+    case "oneOrMore":
+      // A oneOrMore with an empty element is replaced with empty.
+      el.parent!.replaceChildAt(ix, Element.makeElement("empty", []));
+      break;
+    default:
+  }
 }
 
 /**
@@ -106,7 +98,11 @@ function walk(el: Element): void {
  * @returns The new root of the tree.
  */
 export function step18(tree: Element): Element {
-  walk(tree);
+  // The top element is necessarily <grammar>, and it has only element children.
+  let ix = 0;
+  for (const child of tree.children) {
+    walk(child as Element, ix++);
+  }
 
   return tree;
 }

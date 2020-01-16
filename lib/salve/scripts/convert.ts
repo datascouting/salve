@@ -6,7 +6,6 @@
  */
 import * as crypto from "@trust/webcrypto";
 import { ArgumentParser } from "argparse";
-import { spawn } from "child_process";
 import * as fs from "fs";
 import * as nodeFetch from "node-fetch";
 import * as path from "path";
@@ -75,7 +74,7 @@ function terminate(ex: unknown): void {
   }
 }
 process.on("uncaughtException", terminate);
-process.on("unhandledRejection", (ex) => {
+process.on("unhandledRejection", ex => {
   // We convert the rejection into an uncaught exception.
   throw ex;
 });
@@ -222,17 +221,6 @@ function ensureTempDir(): string {
   return _tempDir;
 }
 
-async function prettyPrint(input: string, outputPath: string): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const child = spawn("xmllint", ["--format", "--output", outputPath, "-"],
-                        { stdio: ["pipe", "inherit", "inherit"] });
-    child.stdin.end(input);
-    child.on("exit", () => {
-      resolve(undefined);
-    });
-  });
-}
-
 /**
  * Meant to be used as the ``after`` call back for ``executeStep``. Performs the
  * conversion from RNG to JS.
@@ -242,14 +230,15 @@ async function prettyPrint(input: string, outputPath: string): Promise<void> {
 async function convert(result: SimplificationResult): Promise<void> {
   const simplified = result.simplified;
   if (args.simplify_only && !args.no_output) {
-    return prettyPrint(serialize(simplified), args.output_path);
+    return fs.promises.writeFile(args.output_path,
+                                 serialize(simplified, { prettyPrint: true }));
   }
 
   if (result.warnings.length !== 0 &&
       args.allow_incomplete_types !== "quiet") {
     stderr.write(`${prog}: WARNING: incomplete types are used in the schema\n`);
 
-    result.warnings.forEach((x) => {
+    result.warnings.forEach(x => {
       stderr.write(`${prog}: ${x}\n`);
     });
     if (!args.allow_incomplete_types) {
@@ -351,7 +340,7 @@ async function start(): Promise<void> {
 // tslint:disable-next-line:no-floating-promises
 start().then(() => {
   process.exit(0);
-}).catch((e) => {
+}).catch(e => {
   if (e instanceof ValueValidationError ||
       e instanceof ParameterParsingError ||
       e instanceof SchemaValidationError) {

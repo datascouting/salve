@@ -20,7 +20,6 @@ interface RemovedDefineState {
 
 interface State {
   removedDefines: Map<string, RemovedDefineState>;
-  grammarEl: Element;
   seenRefs: Set<string>;
 }
 
@@ -45,14 +44,13 @@ function wrapElements(state: State, root: Element): Element[] {
       // not harm the uniqueness of the name.
       const name = `__${elName}-elt-${elementCount}`;
 
-      const ref = Element.makeElement("ref");
+      const ref = Element.makeElement("ref", []);
       ref.setAttribute("name", name);
-      el.replaceWith(ref);
+      el.parent!.replaceChildWith(el, ref);
       seenRefs.add(name);
-      const defEl = Element.makeElement("define");
+      const defEl = Element.makeElement("define", [el]);
       toAppend.push(defEl);
       defEl.setAttribute("name", name);
-      defEl.appendChild(el);
     }
   }
 
@@ -80,9 +78,9 @@ function removeDefsWithoutElement(state: State, el: Element): void {
       continue;
     }
 
-    child.empty(); // Effectively removes top from its parent.
-    const name = child.mustGetAttribute("name");
-    removedDefines.set(name, { topElement, used: false });
+    child.removeChildAt(0); // Remove topElement from child.
+    removedDefines.set(child.mustGetAttribute("name"),
+                       { topElement, used: false });
   }
 
   el.replaceContent(keep);
@@ -138,17 +136,25 @@ function substituteRefs(state: State, el: Element,
     }
   }
   else if (!skip.has(local)) {
-    // We do this only for elements that are not "ref". If we have "ref" then
-    // either it has no children, or it has been substituted and walked above.
-    for (let ix = 0; ix < el.children.length; ++ix) {
-      const child = el.children[ix];
-      if (!isElement(child)) {
-        continue;
+    //
+    // By this point, the majority of elements have at most two children.
+    // (<grammar> is the exception.)
+    //
+    // Due to the !skip.has(local) test above, first, and second are Element
+    // object, if they exists. So we assert instead of testing.
+    //
+    const [first, second] = el.children as [Element, Element];
+    if (first !== undefined) {
+      const sub1 = substituteRefs(state, first, seenNames);
+      if (first !== sub1) {
+        el.replaceChildAt(0, sub1);
       }
 
-      const substitute = substituteRefs(state, child, seenNames);
-      if (child !== substitute) {
-        el.replaceChildAt(ix, substitute);
+      if (second !== undefined) {
+        const sub2 = substituteRefs(state, second, seenNames);
+        if (second !== sub2) {
+          el.replaceChildAt(1, sub2);
+        }
       }
     }
   }
@@ -174,14 +180,13 @@ function substituteRefs(state: State, el: Element,
  * @returns The new root of the tree.
  */
 export function step16(tree: Element): Element {
-  let currentTree = tree;
+  const currentTree = tree;
   if (currentTree.local !== "grammar") {
     throw new Error("must be called with a grammar element");
   }
 
   const state: State = {
      // By this point the top element must be the only grammar in the tree.
-    grammarEl: currentTree,
     removedDefines: new Map(),
     seenRefs: new Set(),
   };
@@ -199,7 +204,20 @@ export function step16(tree: Element): Element {
   // ``element`` as their top pattern so they cannot be removed.
   removeDefsWithoutElement(state, currentTree);
   currentTree.appendChildren(toAppend);
-  currentTree = substituteRefs(state, currentTree, new Set());
+  const seenNames = new Set<string>();
+  const { children } = currentTree;
+  for (let ix = 0; ix < children.length; ++ix) {
+    const child = children[ix];
+    if (!isElement(child)) {
+      continue;
+    }
+
+    const substitute = substituteRefs(state, child, seenNames);
+    if (child !== substitute) {
+      currentTree.replaceChildAt(ix, substitute);
+    }
+  }
+
   removeUnreferencedDefs(currentTree, state.seenRefs);
 
   return currentTree;

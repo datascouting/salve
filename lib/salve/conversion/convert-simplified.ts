@@ -22,7 +22,7 @@ function walk(el: Element): (Pattern | ElementPattern | Grammar) {
     case "grammar":
       return new Grammar(el.path, walk(el.children[0] as Element) as Pattern,
                          el.children.slice(1)
-                         .map((x) => walk(x as Element)) as Define[]);
+                         .map(x => walk(x as Element)) as Define[]);
     case "except":
     case "start":
       return walk(el.children[0] as Element);
@@ -43,8 +43,8 @@ function walk(el: Element): (Pattern | ElementPattern | Grammar) {
         (length !== 0 && last.local === "except") ? last : undefined;
       const params =
         ((except === undefined ? children : children.slice(0, -1)) as Element[])
-        .map((param) => ({ name: param.mustGetAttribute("name"),
-                           value: param.children[0].text }));
+        .map(param => ({ name: param.mustGetAttribute("name"),
+                         value: param.children[0].text }));
 
       return new Data(el.path, el.mustGetAttribute("type"),
                       el.mustGetAttribute("datatypeLibrary"),
@@ -90,18 +90,17 @@ function walk(el: Element): (Pattern | ElementPattern | Grammar) {
 function walkNameClass(el: Element): ConcreteName {
   switch (el.local) {
     case "choice":
-      return new NameChoice(el.path,
-                            walkNameClass(el.children[0] as Element),
+      return new NameChoice(walkNameClass(el.children[0] as Element),
                             walkNameClass(el.children[1] as Element));
     case "name":
-      return new Name(el.path, el.mustGetAttribute("ns"), el.text);
+      return new Name(el.mustGetAttribute("ns"), el.text);
     case "nsName":
-      return new NsName(el.path, el.mustGetAttribute("ns"),
+      return new NsName(el.mustGetAttribute("ns"),
                         el.children.length !== 0 ?
                         walkNameClass(el.children[0] as Element) :
                         undefined);
     case "anyName":
-      return new AnyName(el.path, el.children.length !== 0 ?
+      return new AnyName(el.children.length !== 0 ?
                          walkNameClass(el.children[0] as Element) :
                          undefined);
     case "except":

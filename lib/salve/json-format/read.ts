@@ -58,16 +58,17 @@ class V2JSONWalker {
       throw new Error("trying to build array with walkObject");
     }
 
-    const args = array.slice(1);
-    if (args.length !== 0) {
-      this._transformArray(args);
-    }
-    if (this.addPath) {
-      args.unshift("");
+    // This can happen for Empty, Text, notAllowed when the JSON was generated
+    // without path information.
+    if (array.length === 1) {
+      return this._processObject(kind, ctor as PatternCtor, [""]);
     }
 
-    // We do not pass Array to this function.
-    return this._processObject(kind, ctor as PatternCtor, args as PathAndArgs);
+    const args = array.slice(1);
+    this._transformArray(args);
+    return this._processObject(kind, ctor as PatternCtor,
+                               this.addPath ? ["", ...args] :
+                               args as PathAndArgs);
   }
 
   /**
@@ -92,15 +93,14 @@ class V2JSONWalker {
   _transformArray(arr: unknown[]): void {
     const limit = arr.length;
     for (let elIx = 0; elIx < limit; elIx++) {
-      const el = arr[elIx];
-
+      let el = arr[elIx];
       if (el instanceof Array) {
         if (el[0] !== 0) {
           arr[elIx] = this.walkObject(el as KindAndArgs);
         }
         else {
-          el.shift(); // Drop the leading 0.
-          this._transformArray(el);
+          arr[elIx] = el = el.slice(1);
+          this._transformArray(el as any[]);
         }
       }
     }
@@ -184,10 +184,26 @@ const kindToArgFilter: (ArgFilter | undefined)[] = [
   undefined, // Grammar,
   undefined, // EName,
   twoPatternFilter, // Interleave,
-  undefined, // Name,
-  twoPatternFilter, // NameChoice,
-  undefined, // NsName,
-  undefined, // AnyName,
+
+  //
+  // The name pattern filters all drop the path information.
+  //
+
+  // Name,
+  (args: PathAndArgs) => args.slice(1),
+  // NameChoice,
+  (args: PathAndArgs) => {
+    if (args[1].length !== 2) {
+      throw new Error("NameChoice with an array of patterns that " +
+                      "contains other than 2 pattern");
+    }
+
+    return args[1];
+  },
+  // NsName,
+  (args: PathAndArgs) => args.slice(1),
+  // AnyName,
+  (args: PathAndArgs) => args.slice(1),
 ];
 
 /**
@@ -207,12 +223,7 @@ class V2Constructor extends V2JSONWalker {
  * Constructs a tree of patterns from the data structure produced by running
  * ``salve-convert`` on an RNG file.
  *
- * @param code The JSON representation (a string) or the deserialized JSON. **If
- * you pass an object, it will be mutated while producing the result.** So you
- * cannot pass the same object twice to this function. Note that if you are
- * calling this function on the same input repeatedly, you are probably "doing
- * it wrong". You should be caching the results rather than building multiple
- * identical trees.
+ * @param code The JSON representation (a string) or the deserialized JSON.
  *
  * @throws {Error} When the version of the data is not supported.
  *

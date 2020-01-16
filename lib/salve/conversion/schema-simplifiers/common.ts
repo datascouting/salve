@@ -28,7 +28,7 @@ function inAttribute(el: Element): boolean {
 }
 
 export function localName(value: string): string {
-  const sep: number = value.indexOf(":");
+  const sep = value.indexOf(":");
 
   return (sep === -1) ? value : value.slice(sep + 1);
 }
@@ -129,10 +129,9 @@ form the XML Schema library: don't know how to handle");
         if (datatype.needsContext) {
           // Change ns to the namespace we need.
           ns = fromQNameToURI(value, el);
-          el.setAttribute("ns", ns);
           value = localName(value);
-          el.empty();
-          el.appendChild(new Text(value));
+          el.setAttribute("ns", ns);
+          el.replaceContent([new Text(value)]);
         }
 
         const valuePattern = new Value(el.path, value, type, libname, ns);
